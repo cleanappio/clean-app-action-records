@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from "react";
 import { Table, Button, Space, Modal, Input, DatePicker, Checkbox, Form, message } from "antd";
 import dayjs from "dayjs";
@@ -11,17 +12,15 @@ const ActionTable = () => {
 
   const [form] = Form.useForm();
 
-  // Fetch data from the server
+  // Fetch actions from server
   const fetchActions = async () => {
     try {
-      const response = await fetch("http://dev.api.cleanapp.io:8080/get_actions", { method: "GET" });
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+      const response = await fetch("http://dev.api.cleanapp.io:8080/get_actions");
+      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
       const result = await response.json();
-      setData(result.records); // Assuming the response is an array of actions
+      setData(result.records || []);
     } catch (error) {
-      message.error("Failed to fetch actions!");
+      message.error("Failed to fetch actions.");
       console.error(error);
     }
   };
@@ -30,95 +29,90 @@ const ActionTable = () => {
     fetchActions();
   }, []);
 
+  // Validate unique name
+  const isNameUnique = (name, excludeId = null) => {
+    return !data.some((item) => item.name === name && item.id !== excludeId);
+  };
+
   // Add a new action
   const handleAdd = async () => {
-    form.validateFields().then(async (values) => {
-      // Check for duplicate name
-      if (data.some((item) => item.name === values.name)) {
-        message.error("An action with this name already exists!");
+    try {
+      const values = await form.validateFields();
+      if (!isNameUnique(values.name)) {
+        message.error("An action with this name already exists.");
         return;
       }
 
-      try {
-        const newRecord = {
-          version: "2.0",
-          record: {
-            name: values.name,
-            is_active: values.is_active,
-            expiration_date: values.expiration_date.toISOString().split("T")[0],
-          },
-        };
+      const newRecord = {
+        version: "2.0",
+        record: {
+          name: values.name,
+          is_active: values.is_active,
+          expiration_date: dayjs(values.expiration_date).format("YYYY-MM-DD"),
+        },
+      };
 
-        const response = await fetch("http://dev.api.cleanapp.io:8080/create_action", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(newRecord),
-        });
+      const response = await fetch("http://dev.api.cleanapp.io:8080/create_action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newRecord),
+      });
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const res = await response.json();
-        setData((prevData) => [...prevData, res.record]);
-        setIsModalVisible(false);
-        message.success("Action added successfully!");
-      } catch (error) {
-        message.error("Failed to add action!");
-        console.error(error);
-      }
-    });
+      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+
+      const result = await response.json();
+      setData((prevData) => [...prevData, result.record]);
+      setIsModalVisible(false);
+      message.success("Action added successfully.");
+    } catch (error) {
+      message.error("Failed to add action.");
+      console.error(error);
+    }
   };
 
   // Edit an existing action
   const handleEdit = async () => {
-    form.validateFields().then(async (values) => {
-      // Check for duplicate name (excluding the current record)
-      if (data.some((item) => item.name === values.name && item.id !== currentRecord.id)) {
-        message.error("An action with this name already exists!");
+    try {
+      const values = await form.validateFields();
+      if (!isNameUnique(values.name, currentRecord.id)) {
+        message.error("An action with this name already exists.");
         return;
       }
 
-      try {
-        const intern = {
+      const updatedRecord = {
+        version: "2.0",
+        record: {
           ...currentRecord,
-          ...values,
-          expiration_date: values.expiration_date.toISOString().split("T")[0],
-        };
-        const updatedRecord = {
-          version: "2.0",
-          record: intern,
-        };
+          name: values.name,
+          is_active: values.is_active,
+          expiration_date: dayjs(values.expiration_date).format("YYYY-MM-DD"),
+        },
+      };
 
-        const response = await fetch("http://dev.api.cleanapp.io:8080/update_action", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(updatedRecord),
-        });
+      const response = await fetch("http://dev.api.cleanapp.io:8080/update_action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedRecord),
+      });
 
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
+      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
 
-        setData((prevData) =>
-          prevData.map((item) => (item.id === currentRecord.id ? intern : item))
-        );
-        setIsEditModalVisible(false);
-        message.success("Action updated successfully!");
-      } catch (error) {
-        message.error("Failed to update action!");
-        console.error(error);
-      }
-    });
+      setData((prevData) =>
+        prevData.map((item) =>
+          item.id === currentRecord.id ? { ...item, ...updatedRecord.record } : item
+        )
+      );
+      setIsEditModalVisible(false);
+      message.success("Action updated successfully.");
+    } catch (error) {
+      message.error("Failed to update action.");
+      console.error(error);
+    }
   };
 
-  const { confirm } = Modal;
-
+  // Delete an action
   const handleDelete = (id) => {
-    confirm({
+    Modal.confirm({
       title: "Are you sure you want to delete this action?",
       content: "This action cannot be undone.",
       okText: "Yes",
@@ -126,32 +120,20 @@ const ActionTable = () => {
       cancelText: "No",
       onOk: async () => {
         try {
-          const deletePayload = {
-            version: "2.0",
-            record: { id },
-          };
-
           const response = await fetch("http://dev.api.cleanapp.io:8080/delete_action", {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(deletePayload),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ version: "2.0", record: { id } }),
           });
 
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
+          if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
 
           setData((prevData) => prevData.filter((item) => item.id !== id));
-          message.success("Action deleted successfully!");
+          message.success("Action deleted successfully.");
         } catch (error) {
-          message.error("Failed to delete action!");
+          message.error("Failed to delete action.");
           console.error(error);
         }
-      },
-      onCancel() {
-        console.log("Delete canceled");
       },
     });
   };
@@ -205,7 +187,8 @@ const ActionTable = () => {
   const showEditModal = (record) => {
     setCurrentRecord(record);
     form.setFieldsValue({
-      ...record,
+      name: record.name,
+      is_active: record.is_active,
       expiration_date: dayjs(record.expiration_date),
     });
     setIsEditModalVisible(true);
@@ -250,10 +233,7 @@ const ActionTable = () => {
         onCancel={() => setIsEditModalVisible(false)}
       >
         <Form form={form} layout="vertical">
-          <Form.Item label="ID" name="id">
-            <Input disabled />
-          </Form.Item>
-          <Form.Item label="Name" name="name">
+          <Form.Item label="Name" name="name" rules={[{ required: true, message: "Please enter the name" }]}>
             <Input />
           </Form.Item>
           <Form.Item label="Active" name="is_active" valuePropName="checked">
