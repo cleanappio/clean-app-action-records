@@ -1,7 +1,4 @@
 
-
-
-
 import React, { useState, useEffect } from "react";
 import { Table, Button, Space, Modal, Input, DatePicker, Checkbox, Form, message } from "antd";
 import dayjs from "dayjs";
@@ -170,6 +167,7 @@ const ActionTable = () => {
       dataIndex: "name",
       key: "name",
       sorter: (a, b) => a.name.localeCompare(b.name),
+      defaultSortOrder: "ascend",
     },
     {
       title: "Active",
@@ -275,4 +273,3 @@ const ActionTable = () => {
 };
 
 export default ActionTable;
-
