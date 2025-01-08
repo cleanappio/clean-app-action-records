@@ -402,6 +402,11 @@ export default ActionTable;
 
 import React, { useState, useEffect } from "react";
 import { Table, Button, Space, Modal, Input, DatePicker, Checkbox, Form, message } from "antd";
+import dayjs from "dayjs"; // Use moment if your project is configured for it.
+
+
+
+
 
 const ActionTable = () => {
   const [data, setData] = useState([]);
@@ -412,29 +417,29 @@ const ActionTable = () => {
   const [form] = Form.useForm();
 
   // Fetch data from the server
-  
 
-    const fetchActions = async () => {
-      try {
-        const response = await fetch("http://dev.api.cleanapp.io:8080/get_actions", {method: "GET", mode: "no-cors"});
-        //console.log(await response.text());
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const result = await response.json();
-        //console.log(result);
-        setData(result.records); // Assuming the response is an array of actions
-      } catch (error) {
-        message.error("Failed to fetch actions!");
-        console.error(error);
+
+  const fetchActions = async () => {
+    try {
+      const response = await fetch("http://dev.api.cleanapp.io:8080/get_actions", { method: "GET" });
+      //console.log(await response.text());
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
+      const result = await response.json();
+      //console.log(result);
+      setData(result.records); // Assuming the response is an array of actions
+    } catch (error) {
+      message.error("Failed to fetch actions!");
+      console.error(error);
+    }
 
-    } 
+  }
 
-      
+
 
   useEffect(() => {
-    //fetchActions();
+    fetchActions();
   }, []);
 
   // Add a new action
@@ -442,13 +447,17 @@ const ActionTable = () => {
     form.validateFields().then(async (values) => {
       try {
         const newRecord = {
-          id: values.id,
-          name: values.name,
-          is_active: values.is_active,
-          expiration_date: values.expiration_date.toISOString().split("T")[0],
+          version: "2.0",
+          record: {
+            id: '',
+            name: values.name,
+            is_active: values.is_active,
+            expiration_date: values.expiration_date.toISOString().split("T")[0]
+          }
+
         };
 
-        const response = await fetch("http://dev.api.cleanapp.io:8080/create_action", {
+        const response = await fetch("http://dev.api.cleanapp.io:8080/create_action", { //create_action
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -458,9 +467,10 @@ const ActionTable = () => {
 
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
-        }
 
-        setData((prevData) => [...prevData, newRecord]);
+        }
+        const res = await response.json();
+        setData((prevData) => [...prevData, res.record]);
         setIsModalVisible(false);
         message.success("Action added successfully!");
       } catch (error) {
@@ -474,13 +484,17 @@ const ActionTable = () => {
   const handleEdit = async () => {
     form.validateFields().then(async (values) => {
       try {
-        const updatedRecord = {
+        const intern = {
           ...currentRecord,
           ...values,
           expiration_date: values.expiration_date.toISOString().split("T")[0],
         };
+        const updatedRecord = {
+          version: "2.0",
+          record: intern,
+        };
 
-        const response = await fetch("http://dev.api.cleanapp.io:8080/update_action", {
+        const response = await fetch("http://dev.api.cleanapp.io:8080/update_action", { //update_action
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -493,7 +507,7 @@ const ActionTable = () => {
         }
 
         setData((prevData) =>
-          prevData.map((item) => (item.id === currentRecord.id ? updatedRecord : item))
+          prevData.map((item) => (item.id === currentRecord.id ? intern : item))
         );
         setIsEditModalVisible(false);
         message.success("Action updated successfully!");
@@ -504,21 +518,28 @@ const ActionTable = () => {
     });
   };
 
-  // Delete an action
-  const handleDelete = async (id) => {
+  
+
+  /* const handleDelete = async (id) => {
     try {
+      const deletePayload = {
+        version: "2.0", // Include version if the server requires it
+        record: { id }, // Wrap the id in a record object
+      };
+  
       const response = await fetch("http://dev.api.cleanapp.io:8080/delete_action", {
-        method: "POST",
+        method: "POST", // Confirm with the API if POST is correct for deletion
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify(deletePayload),
       });
-
+  
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-
+  
+      // Update the table data by filtering out the deleted record
       setData((prevData) => prevData.filter((item) => item.id !== id));
       message.success("Action deleted successfully!");
     } catch (error) {
@@ -526,6 +547,48 @@ const ActionTable = () => {
       console.error(error);
     }
   };
+  */
+  const { confirm } = Modal;
+
+  const handleDelete = (id) => {
+    confirm({
+      title: "Are you sure you want to delete this action?",
+      content: "This action cannot be undone.",
+      okText: "Yes",
+      okType: "danger",
+      cancelText: "No",
+      onOk: async () => {
+        try {
+          const deletePayload = {
+            version: "2.0", // Include version if the server requires it
+            record: { id }, // Wrap the id in a record object
+          };
+  
+          const response = await fetch("http://dev.api.cleanapp.io:8080/delete_action", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(deletePayload),
+          });
+  
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+  
+          setData((prevData) => prevData.filter((item) => item.id !== id));
+          message.success("Action deleted successfully!");
+        } catch (error) {
+          message.error("Failed to delete action!");
+          console.error(error);
+        }
+      },
+      onCancel() {
+        console.log("Delete canceled");
+      },
+    });
+  };
+  
 
   const columns = [
     {
@@ -534,10 +597,18 @@ const ActionTable = () => {
       key: "id",
     },
     {
+      //title: "Name",
+      //dataIndex: "name",
+      //key: "name",
+
       title: "Name",
       dataIndex: "name",
       key: "name",
+      sorter: (a, b) => a.name.localeCompare(b.name),
     },
+
+
+
     {
       title: "Active",
       dataIndex: "is_active",
@@ -548,7 +619,9 @@ const ActionTable = () => {
       title: "Expiration Date",
       dataIndex: "expiration_date",
       key: "expiration_date",
+      sorter: (a, b) => new Date(a.expiration_date) - new Date(b.expiration_date),
     },
+
     {
       title: "Actions",
       key: "actions",
@@ -570,14 +643,17 @@ const ActionTable = () => {
     setIsModalVisible(true);
   };
 
+
+
   const showEditModal = (record) => {
     setCurrentRecord(record);
     form.setFieldsValue({
       ...record,
-      expiration_date: new Date(record.expiration_date), // Parse date string
+      expiration_date: dayjs(record.expiration_date), // Convert date string to dayjs/moment object
     });
     setIsEditModalVisible(true);
   };
+
 
   return (
     <div>
@@ -588,7 +664,7 @@ const ActionTable = () => {
       </Space>
       <Table dataSource={data} columns={columns} rowKey="id" />
 
-      
+
       <Modal
         title="Add Action"
         visible={isModalVisible}
@@ -615,7 +691,7 @@ const ActionTable = () => {
         </Form>
       </Modal>
 
-      
+
       <Modal
         title="Edit Action"
         visible={isEditModalVisible}
@@ -646,4 +722,6 @@ const ActionTable = () => {
 };
 
 export default ActionTable;
+
+
 
