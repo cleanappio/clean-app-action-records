@@ -186,14 +186,13 @@ const MapView = () => {
 
 export default MapView;
 */
-
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Polygon, FeatureGroup, Popup } from "react-leaflet";
 import { EditControl } from "react-leaflet-draw";
 import axios from "axios";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
-import { Modal, Input, Form } from "antd";
+import { Modal, Input, Form, message } from "antd";
 
 const MapView = () => {
   const [userLocation, setUserLocation] = useState(null);
@@ -201,7 +200,10 @@ const MapView = () => {
   const [selectedPolygon, setSelectedPolygon] = useState(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [form] = Form.useForm();
+  const featureGroupRef = useRef();
+ 
 
+  // Get the user's location on mount
   useEffect(() => {
     navigator.geolocation.getCurrentPosition(
       (position) => {
@@ -213,76 +215,123 @@ const MapView = () => {
     );
   }, []);
 
+  // Fetch polygons from the server
   useEffect(() => {
     axios.get("http://dev.api.cleanapp.io:8080/get_areas")
       .then((response) => {
         setPolygons(response.data.map(area => ({
           ...area,
-          coordinates: area.coordinates.geometry.coordinates[0].map(([lng, lat]) => [lat, lng])
+          coordinates: area.coordinates?.geometry?.coordinates[0].map(([lng, lat]) => [lat, lng]) || []
         })));
       })
       .catch((error) => console.error("Error fetching polygons:", error));
   }, []);
 
+  // Handle the creation of new polygons
   const handleCreated = (e) => {
     if (e.layerType === "polygon") {
-      const newPolygon = {
-        name: "New Area",
+      const latlngs = e.layer.getLatLngs()[0].map(({ lat, lng }) => [lat, lng]);
+      setSelectedPolygon({
+        id: null,
+        name: "",
         description: "",
         contact_name: "",
         contract_emails: [],
-        coordinates: e.layer.getLatLngs()[0].map(latlng => [latlng.lat, latlng.lng])
-      };
-      setSelectedPolygon(newPolygon);
+        coordinates: latlngs,
+        is_custom: true
+      });
+      form.resetFields();
       setIsModalVisible(true);
     }
   };
 
-  const handleSavePolygon = () => {
-    form.validateFields().then(values => {
-      const updatedPolygon = {
-        ...selectedPolygon,
-        ...values,
-        contract_emails: values.contract_emails.split(",").map(email => email.trim())
-      };
-
-      // Check if this is an update or a new polygon
-      if (selectedPolygon.id) {
-        // Edit existing polygon
-        axios.put(`http://dev.api.cleanapp.io:8080/update_area/${selectedPolygon.id}`, updatedPolygon)
-          .then(response => {
-            setPolygons(polygons.map(polygon =>
-              polygon.id === selectedPolygon.id ? response.data : polygon
-            ));
-            setIsModalVisible(false);
-            form.resetFields();
-          })
-          .catch(error => console.error("Error updating polygon:", error));
-      } else {
-        // Create new polygon
-        axios.post("http://dev.api.cleanapp.io:8080/add_area", updatedPolygon)
-          .then(response => {
-            setPolygons([...polygons, {
-              ...response.data,
-              coordinates: response.data.coordinates.geometry.coordinates[0].map(([lng, lat]) => [lat, lng])
-            }]);
-            setIsModalVisible(false);
-            form.resetFields();
-          })
-          .catch(error => console.error("Error saving polygon:", error));
-      }
-    });
-  };
-
+  // Handle editing of existing polygons
   const handleEditPolygon = (polygon) => {
-    setSelectedPolygon(polygon);
-    setIsModalVisible(true);
+    setSelectedPolygon({ ...polygon });
     form.setFieldsValue({
       name: polygon.name,
       description: polygon.description,
       contact_name: polygon.contact_name,
-      contract_emails: polygon.contract_emails ? polygon.contract_emails.join(", ") : ""
+      contract_emails: polygon.contract_emails?.map(c => c.email).join(", ") || ""
     });
+    setIsModalVisible(true);
+  };
+
+  // Function to save or update the polygon
+  const handleSavePolygon = async () => {
+    try {
+      // Validate form
+      const values = await form.validateFields();
+
+      // Prepare the coordinates for GeoJSON format
+      const latLngs = selectedPolygon.coordinates;
+      const closed = [...latLngs];
+      if (closed.length && (closed[0][0] !== closed.at(-1)[0] || closed[0][1] !== closed.at(-1)[1])) {
+        closed.push(closed[0]);
+      }
+
+      const geoJSONCoordinates = {
+        type: "Feature",
+        geometry: {
+          type: "Polygon",
+          coordinates: [closed.map(([lat, lng]) => [lng, lat])]
+        }
+      };
+
+      const payload = {
+        version :"2.0",
+        area:{ 
+          id: selectedPolygon.id,
+          name: values.name,
+          description: values.description,
+          contact_name: values.contact_name,
+          is_custom: true,
+          contract_emails: values.contract_emails
+            .split(",")
+            .map(email => email.trim())
+            .filter(email => email)
+            .map(email => ({ email })),
+          coordinates: geoJSONCoordinates,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+        
+      };
+
+      // Debugging: Log the payload to ensure the data is correctly structured
+      console.log("Sending payload:", payload);
+
+      // If editing an existing polygon
+      if (selectedPolygon.id) {
+        const response = await axios.post(`http://dev.api.cleanapp.io:8080/create_or_update_area`, payload);
+         if (response.status === 200) {
+          message.success("Polygon updated successfully");
+         }
+        
+      } else {
+        // If creating a new polygon
+        const response = await axios.post("http://dev.api.cleanapp.io:8080/create_or_update_area", payload);
+        if (response.status === 200) {
+          message.success("Polygon created successfully");
+        }
+        
+      }
+
+      // Close the modal and reset the form
+      setIsModalVisible(false);
+      form.resetFields();
+    } catch (error) {
+      console.error("Failed to save polygon:", error);
+
+      // Display appropriate error message
+      if (error.response) {
+        console.error("Response error:", error.response.data);
+        message.error("Failed to save polygon. Please check the console for errors.");
+      } else {
+        console.error("Error:", error.message);
+        message.error("Network error: " + error.message);
+      }
+    }
   };
 
   return (
@@ -290,9 +339,10 @@ const MapView = () => {
       <MapContainer center={userLocation || [51.505, -0.09]} zoom={15} style={{ height: "100vh", width: "100%" }}>
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
         {userLocation && <Marker position={userLocation} />}
+
         {polygons.map((polygon) => (
           <Polygon
-            key={polygon.id}
+            key={polygon.id || Math.random()}
             positions={polygon.coordinates}
             color="blue"
             eventHandlers={{ click: () => handleEditPolygon(polygon) }}
@@ -300,7 +350,8 @@ const MapView = () => {
             <Popup>{polygon.name}</Popup>
           </Polygon>
         ))}
-        <FeatureGroup>
+
+        <FeatureGroup ref={featureGroupRef}>
           <EditControl
             position="topright"
             draw={{
@@ -315,7 +366,13 @@ const MapView = () => {
           />
         </FeatureGroup>
       </MapContainer>
-      <Modal title="Polygon Details" open={isModalVisible} onCancel={() => setIsModalVisible(false)} onOk={handleSavePolygon}>
+
+      <Modal
+        title="Polygon Details"
+        open={isModalVisible}
+        onCancel={() => setIsModalVisible(false)}
+        onOk={handleSavePolygon}
+      >
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="Name" rules={[{ required: true, message: "Please enter a name!" }]}>
             <Input />
